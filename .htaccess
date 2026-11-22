@@ -1,0 +1,63 @@
+# =====================================================================
+#  College Management System - Apache security configuration
+#  Works on Hostinger / GoDaddy (Apache or LiteSpeed) shared hosting.
+# =====================================================================
+
+Options -Indexes -MultiViews
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # --- Force HTTPS (uncomment once an SSL certificate is active) ---
+    # RewriteCond %{HTTPS} !=on
+    # RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # Block access to internal folders (also protected by their own .htaccess)
+    RewriteRule ^(app|config|database|storage|docs)(/|$) - [F,L,NC]
+
+    # Block hidden files (.env, .git, ...) except .well-known (SSL validation)
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+</IfModule>
+
+# Deny sensitive file types anywhere
+<FilesMatch "\.(sql|gz|log|md|ini|env|bak|sh|py|lock|json|dist|sample)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^(composer\.(json|lock)|package(-lock)?\.json|README.*|LICENSE.*)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    # Enable HSTS only after HTTPS works for the whole domain:
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Header unset X-Powered-By
+</IfModule>
+
+# Static asset caching (JS/CSS revalidate so updates are picked up)
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/svg+xml "access plus 7 days"
+    ExpiresByType text/css "access plus 1 hour"
+    ExpiresByType application/javascript "access plus 1 hour"
+    ExpiresByType text/javascript "access plus 1 hour"
+</IfModule>
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript text/javascript application/json image/svg+xml
+</IfModule>
+
+# PHP settings (ignored where the host uses PHP-FPM; set them in cPanel "MultiPHP INI Editor" instead)
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag expose_php Off
+    php_value upload_max_filesize 4M
+    php_value post_max_size 8M
+    php_flag session.cookie_httponly On
+    php_flag session.use_strict_mode On
+</IfModule>

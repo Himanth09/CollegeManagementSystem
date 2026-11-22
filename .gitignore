@@ -1,0 +1,8 @@
+config/config.php
+storage/install.lock
+storage/backups/*
+storage/logs/*
+storage/uploads/students/*
+storage/uploads/staff/*
+!storage/**/.gitkeep
+!storage/**/.htaccess
