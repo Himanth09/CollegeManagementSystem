@@ -6,6 +6,7 @@ declare(strict_types=1);
  *
  *   php tests/run.php                 all tests (integration tests skip when no test DB is configured)
  *   php tests/run.php --unit          unit tests only
+ *   php tests/run.php --http          only the end-to-end HTTP integration tests
  *   php tests/run.php --filter=Money  only tests whose "suite > name" contains the text
  *   php tests/run.php -v              list every test, not just failures
  */
@@ -17,12 +18,17 @@ if (PHP_SAPI !== 'cli') {
 
 require __DIR__ . '/bootstrap.php';
 
-$opts = getopt('v', ['unit', 'filter:']);
+$opts = getopt('v', ['unit', 'http', 'filter:']);
 $verbose = isset($opts['v']);
 $unitOnly = isset($opts['unit']);
+$httpOnly = isset($opts['http']);
 $filter = isset($opts['filter']) ? (string) $opts['filter'] : null;
 
-$files = array_merge(glob(__DIR__ . '/Unit/*Test.php') ?: [], $unitOnly ? [] : (glob(__DIR__ . '/Integration/*Test.php') ?: []));
+$files = array_merge(
+    $httpOnly ? [] : (glob(__DIR__ . '/Unit/*Test.php') ?: []),
+    $unitOnly || $httpOnly ? [] : (glob(__DIR__ . '/Integration/*Test.php') ?: []),
+    $unitOnly ? [] : (glob(__DIR__ . '/Http/*Test.php') ?: [])
+);
 sort($files);
 foreach ($files as $f) {
     require $f;
@@ -35,6 +41,15 @@ if (!$unitOnly && test_db_config() !== null) {
         $pdo = App\Core\Database::pdo();
     } catch (Throwable $e) {
         $dbError = $e->getMessage();
+    }
+}
+
+TestKit::$http = $unitOnly ? null : test_http_config();
+$httpError = null;
+if (TestKit::$http !== null) {
+    $probe = @file_get_contents(rtrim(TestKit::$http['url'], '/') . '/api/index.php?r=/auth/me', false, stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 5]]));
+    if ($probe === false || !str_contains($probe, '"ok"')) {
+        $httpError = 'test server not reachable at ' . TestKit::$http['url'];
     }
 }
 
@@ -61,6 +76,9 @@ foreach (TestKit::$tests as $t) {
                 skip($dbError ? "test DB unreachable: $dbError" : 'no test database configured');
             }
             $pdo->beginTransaction();
+        }
+        if ($t['http'] && (TestKit::$http === null || $httpError !== null)) {
+            skip($httpError ?? 'no HTTP test server configured');
         }
         ($t['fn'])();
     } catch (SkipTest $e) {

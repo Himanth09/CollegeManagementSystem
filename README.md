@@ -161,6 +161,27 @@ Integration tests (Database, FeeLedger balances, Auth/RBAC) need a **dedicated**
 
 You can also set the `CMS_TEST_DB_HOST`, `_PORT`, `_NAME`, `_USER` and `_PASS` environment variables. If neither is configured, the integration tests are skipped. The runner exits with code 1 if any test fails, so it can be used in CI.
 
+**End-to-end HTTP tests** (`tests/Http`, run with `php tests/run.php --http`) send real requests to a running copy of the app. They go through the router, sessions, CSRF, controllers and MySQL, just like the browser does. They cover:
+- login, logout and throttling
+- role-based access for all 3 roles
+- the student lifecycle
+- the full fee workflow (partial payments, duplicate-reference review, cancellation, receipts, dues)
+- salary revisions and payroll
+- reports, audit log, user permissions and backups
+
+These tests **commit data**, so run them against a disposable test install, never a live site. Add an `http` section to `tests/config.test.php`. In that file, the database settings go under a `'db'` key:
+
+```php
+<?php return [
+    'db'   => ['host' => '127.0.0.1', 'port' => 3306, 'name' => 'cms_unittest', 'user' => 'cms', 'pass' => 'secret'],
+    'http' => ['url' => 'http://127.0.0.1:8098', 'users' => [
+        'super_admin' => ['admin', 'Admin@12345'], 'accountant' => ['accountant', 'Demo@12345'], 'staff' => ['staff', 'Demo@12345'],
+    ]],
+];
+```
+
+The test server must use the seed data (`seed.sql`) with those passwords set. For example: `php -S 127.0.0.1:8098` in a copy of the site whose `config.php` points to a fresh test database. Each run uses unique IDs, so the suite can be run repeatedly. The login-throttle test adds failed attempts, though: after about 3 runs within 15 minutes, logins from your machine's IP address are blocked for 15 minutes, so reload the database between runs.
+
 ---
 
 ## 8. Regenerating the sample data

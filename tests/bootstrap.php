@@ -22,10 +22,23 @@ spl_autoload_register(static function (string $class): void {
 });
 
 require __DIR__ . '/lib/TestKit.php';
+require __DIR__ . '/lib/ApiClient.php';
+
+/** tests/config.test.php may return the DB settings directly, or ['db' => [...], 'http' => [...]]. */
+function test_settings(): array
+{
+    static $s = null;
+    if ($s === null) {
+        $file = __DIR__ . '/config.test.php';
+        $raw = is_file($file) ? require $file : [];
+        $s = isset($raw['host']) || isset($raw['name']) ? ['db' => $raw] : $raw;
+    }
+    return $s;
+}
 
 /**
  * Test database settings, in order of preference:
- *   1. tests/config.test.php (git-ignored), returning ['host'=>..., 'port'=>..., 'name'=>..., 'user'=>..., 'pass'=>...]
+ *   1. tests/config.test.php (git-ignored), 'db' => ['host'=>..., 'port'=>..., 'name'=>..., 'user'=>..., 'pass'=>...]
  *   2. environment variables CMS_TEST_DB_HOST / _PORT / _NAME / _USER / _PASS
  * Integration tests are skipped when neither is present.
  * Use a DEDICATED test database loaded with schema.sql + seed.sql: every test
@@ -33,9 +46,8 @@ require __DIR__ . '/lib/TestKit.php';
  */
 function test_db_config(): ?array
 {
-    $file = __DIR__ . '/config.test.php';
-    if (is_file($file)) {
-        return require $file;
+    if (!empty(test_settings()['db'])) {
+        return test_settings()['db'];
     }
     if (getenv('CMS_TEST_DB_NAME')) {
         return [
@@ -46,6 +58,28 @@ function test_db_config(): ?array
             'pass' => getenv('CMS_TEST_DB_PASS') ?: '',
             'charset' => 'utf8mb4',
         ];
+    }
+    return null;
+}
+
+/**
+ * End-to-end HTTP settings: tests/config.test.php 'http' => ['url' => 'http://127.0.0.1:8098',
+ * 'users' => ['super_admin' => ['admin', 'pw'], 'accountant' => [...], 'staff' => [...]]],
+ * or CMS_TEST_URL plus CMS_TEST_ADMIN / CMS_TEST_ACCOUNTANT / CMS_TEST_STAFF as "user:password".
+ */
+function test_http_config(): ?array
+{
+    if (!empty(test_settings()['http']['url'])) {
+        return test_settings()['http'];
+    }
+    if (getenv('CMS_TEST_URL')) {
+        $users = [];
+        foreach (['super_admin' => 'CMS_TEST_ADMIN', 'accountant' => 'CMS_TEST_ACCOUNTANT', 'staff' => 'CMS_TEST_STAFF'] as $role => $env) {
+            if (getenv($env)) {
+                $users[$role] = explode(':', (string) getenv($env), 2);
+            }
+        }
+        return ['url' => getenv('CMS_TEST_URL'), 'users' => $users];
     }
     return null;
 }

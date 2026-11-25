@@ -12,10 +12,13 @@ declare(strict_types=1);
 
 final class TestKit
 {
-    /** @var list<array{suite:string, name:string, fn:callable, db:bool}> */
+    /** @var list<array{suite:string, name:string, fn:callable, db:bool, http:bool}> */
     public static array $tests = [];
     public static string $suite = '';
     public static bool $suiteNeedsDb = false;
+    public static bool $suiteNeedsHttp = false;
+    /** HTTP suite settings: ['url' => ..., 'users' => ['super_admin' => [user, pass], ...]] */
+    public static ?array $http = null;
     public static int $assertions = 0;
 }
 
@@ -27,19 +30,24 @@ final class SkipTest extends RuntimeException
 {
 }
 
-/** Registers a group of tests. Pass $db = true when the tests need the test database. */
-function suite(string $name, callable $define, bool $db = false): void
+/**
+ * Registers a group of tests. $db = true: needs the test database (each test is rolled back).
+ * $http = true: end-to-end tests against a running test server (data is committed).
+ */
+function suite(string $name, callable $define, bool $db = false, bool $http = false): void
 {
     TestKit::$suite = $name;
     TestKit::$suiteNeedsDb = $db;
+    TestKit::$suiteNeedsHttp = $http;
     $define();
     TestKit::$suite = '';
     TestKit::$suiteNeedsDb = false;
+    TestKit::$suiteNeedsHttp = false;
 }
 
 function it(string $name, callable $fn): void
 {
-    TestKit::$tests[] = ['suite' => TestKit::$suite, 'name' => $name, 'fn' => $fn, 'db' => TestKit::$suiteNeedsDb];
+    TestKit::$tests[] = ['suite' => TestKit::$suite, 'name' => $name, 'fn' => $fn, 'db' => TestKit::$suiteNeedsDb, 'http' => TestKit::$suiteNeedsHttp];
 }
 
 function skip(string $reason): never
