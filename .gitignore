@@ -6,3 +6,6 @@ storage/uploads/students/*
 storage/uploads/staff/*
 !storage/**/.gitkeep
 !storage/**/.htaccess
+
+# Local test DB credentials
+tests/config.test.php

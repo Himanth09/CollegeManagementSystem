@@ -142,6 +142,27 @@ Password rule: at least 8 characters, with upper- and lower-case letters, a numb
 
 ---
 
-## 7. Regenerating the sample data
+## 7. Running the tests
+
+The `tests/` folder holds a dependency-free suite. It needs no Composer or PHPUnit, and it is blocked from the web.
+
+```bash
+php tests/run.php --unit      # unit tests only, no database needed
+php tests/run.php             # unit + integration tests
+php tests/run.php -v          # list every test
+php tests/run.php --filter=Money
+```
+
+Integration tests (Database, FeeLedger balances, Auth/RBAC) need a **dedicated** test database loaded with `schema.sql` and then `seed.sql`. Each test runs in a transaction that is rolled back. Point the suite at the test database with `tests/config.test.php`, which is git-ignored:
+
+```php
+<?php return ['host' => '127.0.0.1', 'port' => 3306, 'name' => 'cms_unittest', 'user' => 'cms', 'pass' => 'secret'];
+```
+
+You can also set the `CMS_TEST_DB_HOST`, `_PORT`, `_NAME`, `_USER` and `_PASS` environment variables. If neither is configured, the integration tests are skipped. The runner exits with code 1 if any test fails, so it can be used in CI.
+
+---
+
+## 8. Regenerating the sample data
 
 `database/tools/generate_seed.py` builds `seed.sql` and checks that every total adds up (no overpayment, correct payable and net amounts). Run `python database/tools/generate_seed.py` and re-import.
