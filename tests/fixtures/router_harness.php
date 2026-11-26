@@ -30,10 +30,10 @@ use App\Core\Router;
 
 final class FakeIntegrityError extends PDOException
 {
-    public function __construct(string $msg)
+    public function __construct(string $msg, string $sqlState = '23000')
     {
         parent::__construct($msg);
-        $this->code = '23000';
+        $this->code = $sqlState;
     }
 }
 
@@ -60,6 +60,7 @@ $r->get('/invalid', static fn () => throw HttpException::validation(['name' => '
 $r->get('/boom', static fn () => throw new RuntimeException('secret internal detail'));
 $r->get('/check', static fn () => throw new PDOException('SQLSTATE[HY000]: Check constraint \'chk_sfa_concession\' is violated.'));
 $r->get('/dup', static fn () => throw new FakeIntegrityError('SQLSTATE[23000]: Duplicate entry \'X\' for key \'uq\''));
+$r->get('/range', static fn () => throw new FakeIntegrityError('SQLSTATE[22003]: Numeric value out of range', '22003'));
 $r->get('/fk', static fn () => throw new FakeIntegrityError('SQLSTATE[23000]: Cannot delete or update a parent row'));
 
 $r->dispatch((string) ($in['method'] ?? 'GET'), (string) ($in['path'] ?? '/'));

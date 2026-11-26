@@ -15,7 +15,7 @@ if (is_dir(__DIR__ . '/install') && !is_file(STORAGE_PATH . '/install.lock')) {
     exit;
 }
 
-$v = '1.0.0';
+$v = '1.1.0';
 $e = static fn ($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 $appName = (string) Config::get('app.name', 'College Management System');
 $college = (string) Config::get('app.college_name', '');

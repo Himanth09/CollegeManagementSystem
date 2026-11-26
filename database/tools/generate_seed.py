@@ -343,6 +343,10 @@ sql.append(insert("audit_logs", ["user_id", "action", "entity_type", "entity_id"
     (1, "system.seed", "system", None, '{"note": "Sample data loaded"}'),
 ]))
 
+# Running paid totals on each fee assignment (kept in sync by FeeLedger at runtime).
+sql.append("UPDATE student_fee_assignments a SET amount_paid = (SELECT COALESCE(SUM(p.amount), 0) FROM fee_payments p\n"
+           "  WHERE p.assignment_id = a.id AND p.status = 'confirmed');\n")
+
 sql.append("SET FOREIGN_KEY_CHECKS = 1;\n")
 OUT.write_text("\n".join(sql), encoding="utf-8")
 

@@ -1,5 +1,5 @@
 import { html, useState, useApi, useAuth, useMeta, download, today, thisMonth } from '../lib.js';
-import { PageHeader, Card, DataTable, Button, Spinner, ErrorBox, Empty, renderCell, Icon } from '../components.js';
+import { PageHeader, Card, DataTable, Button, Spinner, ErrorBox, Empty, renderCell, Icon, Alert } from '../components.js';
 import { STAFF_STATUSES } from './staff.js';
 
 const yearAgo = () => { const d = new Date(); d.setMonth(d.getMonth() - 11, 1); return d.toISOString().slice(0, 8) + '01'; };
@@ -58,6 +58,7 @@ function ReportView({ report }) {
     actions=${html`<${Button} size="sm" icon="print" onClick=${() => window.print()}>Print<//><${Button} size="sm" icon="download" variant="primary" onClick=${() => download(`/reports/${report.key}`, { ...params, format: 'csv' })}>CSV<//>`}>
     <div class="toolbar no-print">${report.filters.map((k) => html`<span key=${k}>${F[k]}</span>`)}</div>
     ${error && html`<${ErrorBox} error=${error} onRetry=${reload} />`}
+    ${data?.truncated && html`<div class="no-print" style="padding: 0 16px"><${Alert} type="info">${data.notice}<//></div>`}
     ${loading && !data ? html`<${Spinner} />` : data && html`<${DataTable} rows=${data.rows.map((r, i) => ({ ...r, __i: i }))} rowKey="__i" loading=${loading} empty="No data for the selected filters"
       columns=${cols.map((c) => ({ key: c.key, label: c.label, type: c.type, align: ['money', 'int', 'percent'].includes(c.type) ? 'right' : undefined }))}
       footer=${hasTotals && data.rows.length > 0 && html`<tr>${cols.map((c, i) => html`<td key=${c.key} class=${['money', 'int', 'percent'].includes(c.type) ? 'r num' : ''}>

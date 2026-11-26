@@ -283,13 +283,14 @@ final class FeeController
     private const PAY_SELECT = 'fp.id, fp.receipt_no, fp.payment_date, fp.amount, fp.payment_mode, fp.transaction_ref,
         fp.remarks, fp.status, fp.review_reason, fp.review_note, fp.reviewed_at, fp.created_at, fp.assignment_id,
         s.id AS student_id, s.admission_no, s.full_name AS student_name, c.name AS course_name, a.title AS assignment_title,
-        a.semester, u.full_name AS recorded_by_name, rv.full_name AS reviewed_by_name';
+        a.semester, (SELECT u.full_name FROM users u WHERE u.id = fp.recorded_by) AS recorded_by_name,
+        (SELECT rv.full_name FROM users rv WHERE rv.id = fp.reviewed_by) AS reviewed_by_name';
     private const PAY_FROM = 'FROM fee_payments fp
         JOIN students s ON s.id = fp.student_id
         JOIN courses c ON c.id = s.course_id
-        JOIN student_fee_assignments a ON a.id = fp.assignment_id
-        LEFT JOIN users u ON u.id = fp.recorded_by
-        LEFT JOIN users rv ON rv.id = fp.reviewed_by';
+        JOIN student_fee_assignments a ON a.id = fp.assignment_id';
+    // (User names are looked up per row: joining the tiny users table made MySQL pick a
+    //  hash join that scans and sorts every payment before applying LIMIT.)
     private const PAY_SORT = [
         'payment_date' => 'fp.payment_date', 'amount' => 'fp.amount', 'student_name' => 's.full_name',
         'receipt_no' => 'fp.receipt_no', 'payment_mode' => 'fp.payment_mode', 'status' => 'fp.status', 'id' => 'fp.id',
@@ -298,10 +299,17 @@ final class FeeController
     private static function paymentFilters(): ListQuery
     {
         $q = new ListQuery();
-        $q->search(Request::queryStr('q'), ['s.full_name', 's.admission_no', 'fp.receipt_no', 'fp.transaction_ref']);
+        if (($term = Request::queryStr('q')) !== null) {
+            // Index-friendly search: exact receipt / reference, or a matching student.
+            // (A substring LIKE across a joined payments table is a full scan at scale.)
+            $like = '%' . addcslashes($term, '%_\\') . '%';
+            $q->add('(fp.receipt_no = ? OR fp.transaction_ref_norm = ? OR fp.student_id IN
+                     (SELECT st.id FROM students st WHERE st.full_name LIKE ? OR st.admission_no LIKE ?))',
+                strtoupper(trim($term)), FeeLedger::normalizeRef($term) ?? '', $like, $like);
+        }
         $q->when(Request::queryDate('from'), 'fp.payment_date >= ?');
         $q->when(Request::queryDate('to'), 'fp.payment_date <= ?');
-        $q->when(Request::queryInt('course_id'), 's.course_id = ?');
+        $q->when(Request::queryInt('course_id'), 'fp.student_id IN (SELECT st.id FROM students st WHERE st.course_id = ?)');
         $q->when(Request::queryInt('student_id'), 'fp.student_id = ?');
         $mode = Request::queryStr('mode');
         if (in_array($mode, self::MODES, true)) {
@@ -318,10 +326,11 @@ final class FeeController
     {
         Auth::requirePermission('fees.view');
         $q = self::paymentFilters();
-        $result = $q->paginate(self::PAY_SELECT, self::PAY_FROM, ListQuery::orderBy(self::PAY_SORT, 'id', 'desc'));
+        // Filters only reference fp.*, so counts and totals skip the joins (every join is a required FK).
+        $result = $q->paginate(self::PAY_SELECT, self::PAY_FROM, ListQuery::orderBy(self::PAY_SORT, 'id', 'desc'), 15, 'FROM fee_payments fp');
         $result['totals'] = Database::one(
             "SELECT COALESCE(SUM(CASE WHEN fp.status = 'confirmed' THEN fp.amount END), 0) AS confirmed_total,
-                    COUNT(*) AS count " . self::PAY_FROM . $q->whereSql(),
+                    COUNT(*) AS count FROM fee_payments fp" . $q->whereSql(),
             $q->params
         );
         $result['pending_review'] = (int) Database::value("SELECT COUNT(*) FROM fee_payments WHERE status = 'pending_review'");
@@ -331,8 +340,8 @@ final class FeeController
     public static function exportPayments(): never
     {
         Auth::requirePermission('fees.view');
-        $rows = self::paymentFilters()->all(self::PAY_SELECT, self::PAY_FROM, ListQuery::orderBy(self::PAY_SORT, 'payment_date'));
-        Audit::log('fee_payment.export', 'fee_payment', null, null, ['rows' => count($rows)]);
+        $rows = self::paymentFilters()->cursor(self::PAY_SELECT, self::PAY_FROM, ListQuery::orderBy(self::PAY_SORT, 'payment_date'));
+        Audit::log('fee_payment.export', 'fee_payment', null, null, ['filters' => Csv::filters()]);
         Csv::download('fee_payments', [
             'receipt_no' => 'Receipt No', 'payment_date' => 'Payment Date', 'admission_no' => 'Admission No',
             'student_name' => 'Student', 'course_name' => 'Course', 'assignment_title' => 'Fee', 'amount' => 'Amount',
@@ -440,6 +449,7 @@ final class FeeController
             if ($status === 'confirmed') {
                 $receipt = FeeLedger::receiptNo($id, $d['payment_date']);
                 Database::execute('UPDATE fee_payments SET receipt_no = ? WHERE id = ?', [$receipt, $id]);
+                FeeLedger::addPaid((int) $a['id'], $d['amount']);
             }
             Audit::log('fee_payment.create', 'fee_payment', $id, null, $row + ['receipt_no' => $receipt,
                 'balance_before' => $a['balance'],
@@ -474,6 +484,7 @@ final class FeeController
                 }
                 $update['status'] = 'confirmed';
                 $update['receipt_no'] = FeeLedger::receiptNo($id, $p['payment_date']);
+                FeeLedger::addPaid((int) $p['assignment_id'], (string) $p['amount']);
             } else {
                 $update['status'] = 'rejected';
             }
@@ -494,6 +505,8 @@ final class FeeController
             if ($p['status'] !== 'confirmed') {
                 throw new HttpException('Only confirmed payments can be cancelled.', 409);
             }
+            FeeLedger::lockAssignment((int) $p['assignment_id']);
+            FeeLedger::addPaid((int) $p['assignment_id'], Money::sub('0', (string) $p['amount']));
             $update = ['status' => 'cancelled', 'review_note' => 'Cancelled: ' . $d['reason'],
                 'reviewed_by' => Auth::id(), 'reviewed_at' => date('Y-m-d H:i:s')];
             Database::update('fee_payments', $id, $update);
@@ -504,13 +517,13 @@ final class FeeController
 
     // ================================================================ dues
     private const DUES_SELECT = 'a.id AS assignment_id, a.title, a.semester, a.due_date, a.total_payable,
-        COALESCE(p.paid, 0) AS amount_paid, a.total_payable - COALESCE(p.paid, 0) AS balance,
+        a.amount_paid, a.balance,
         (a.due_date IS NOT NULL AND a.due_date < CURDATE()) AS is_overdue,
         GREATEST(DATEDIFF(CURDATE(), a.due_date), 0) AS days_overdue,
         s.id AS student_id, s.admission_no, s.full_name AS student_name, s.contact_number, s.parent_contact_number,
         s.status AS student_status, c.name AS course_name, d.name AS department_name, ay.name AS academic_year';
     private const DUES_SORT = [
-        'balance' => 'balance', 'due_date' => 'a.due_date', 'student_name' => 's.full_name',
+        'balance' => 'a.balance', 'due_date' => 'a.due_date', 'student_name' => 's.full_name',
         'course' => 'c.name', 'days_overdue' => 'days_overdue', 'total_payable' => 'a.total_payable',
     ];
 
@@ -520,14 +533,13 @@ final class FeeController
             JOIN students s ON s.id = a.student_id
             JOIN courses c ON c.id = s.course_id
             JOIN departments d ON d.id = s.department_id
-            JOIN academic_years ay ON ay.id = a.academic_year_id
-            LEFT JOIN ' . FeeLedger::PAID_SUBQUERY . ' p ON p.assignment_id = a.id';
+            JOIN academic_years ay ON ay.id = a.academic_year_id';
     }
 
     public static function duesFilters(): ListQuery
     {
         $q = new ListQuery();
-        $q->add('a.total_payable - COALESCE(p.paid, 0) > 0');
+        $q->add('a.balance > 0');
         $q->search(Request::queryStr('q'), ['s.full_name', 's.admission_no']);
         $q->when(Request::queryInt('course_id'), 's.course_id = ?');
         $q->when(Request::queryInt('department_id'), 's.department_id = ?');
@@ -546,7 +558,7 @@ final class FeeController
         $result = $q->paginate(self::DUES_SELECT, self::duesFrom(), ListQuery::orderBy(self::DUES_SORT, 'balance', 'desc'));
         $result['totals'] = Database::one(
             'SELECT COUNT(*) AS count, COUNT(DISTINCT a.student_id) AS students,
-                    COALESCE(SUM(a.total_payable - COALESCE(p.paid, 0)), 0) AS outstanding ' . self::duesFrom() . $q->whereSql(),
+                    COALESCE(SUM(a.balance), 0) AS outstanding ' . self::duesFrom() . $q->whereSql(),
             $q->params
         );
         Response::ok($result);
@@ -555,7 +567,7 @@ final class FeeController
     public static function exportDues(): never
     {
         Auth::requirePermission('fees.view');
-        $rows = self::duesFilters()->all(self::DUES_SELECT, self::duesFrom(), ListQuery::orderBy(self::DUES_SORT, 'balance', 'desc'));
+        $rows = self::duesFilters()->cursor(self::DUES_SELECT, self::duesFrom(), ListQuery::orderBy(self::DUES_SORT, 'balance', 'desc'));
         Csv::download(Request::queryStr('overdue') === '1' ? 'overdue_fees' : 'pending_dues', [
             'admission_no' => 'Admission No', 'student_name' => 'Student', 'course_name' => 'Course',
             'academic_year' => 'Academic Year', 'semester' => 'Semester', 'title' => 'Fee', 'total_payable' => 'Payable',

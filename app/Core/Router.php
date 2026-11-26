@@ -56,6 +56,10 @@ final class Router
             if (stripos($msg, 'check constraint') !== false || stripos($msg, 'CONSTRAINT') !== false && stripos($msg, 'failed') !== false) {
                 Response::error('The values entered violate a business rule (for example, a discount larger than the fee).', 422);
             }
+            // 22003 = numeric value out of range (e.g. a total too large for its column)
+            if ($e->getCode() === '22003') {
+                Response::error('An amount or total is larger than the system can store.', 422);
+            }
             // 23000 = integrity constraint (duplicate key / foreign-key restriction)
             if ($e->getCode() === '23000') {
                 Response::error(str_contains($msg, 'Duplicate entry')

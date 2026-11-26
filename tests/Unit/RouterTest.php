@@ -80,6 +80,9 @@ suite('Router', function () {
         [$s, $b] = route('GET', '/dup');
         eq(409, $s);
         contains('already exists', $b['message']);
+        [$s, $b] = route('GET', '/range');
+        eq(422, $s, 'out-of-range value');
+        contains('larger than', $b['message']);
         [$s, $b] = route('GET', '/fk');
         eq(409, $s);
         contains('linked to other records', $b['message']);

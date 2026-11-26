@@ -59,8 +59,8 @@ final class StudentController
     public static function export(): never
     {
         Auth::requirePermission('students.view');
-        $rows = self::filters()->all(self::SELECT, self::FROM, ListQuery::orderBy(self::SORT, 'admission_no'));
-        Audit::log('student.export', 'student', null, null, ['rows' => count($rows)]);
+        $rows = self::filters()->cursor(self::SELECT, self::FROM, ListQuery::orderBy(self::SORT, 'admission_no'));
+        Audit::log('student.export', 'student', null, null, ['filters' => Csv::filters()]);
         Csv::download('students', [
             'admission_no' => 'Admission No', 'full_name' => 'Full Name', 'father_name' => "Father's Name",
             'mother_name' => "Mother's Name", 'date_of_birth' => 'Date of Birth', 'gender' => 'Gender',

@@ -268,6 +268,11 @@ CREATE TABLE IF NOT EXISTS student_fee_assignments (
     total_payable      DECIMAL(12,2) GENERATED ALWAYS AS
                        ((admission_fee + tuition_fee + examination_fee + library_fee + laboratory_fee + transport_fee + hostel_fee + misc_fee)
                         - scholarship_amount - discount_amount) STORED,
+    -- Running total of CONFIRMED payments. Maintained by App\Core\FeeLedger in the same
+    -- locked transaction that changes a payment's status, so balances never need a full
+    -- scan of fee_payments. The CHECK below makes overpayment impossible even for buggy code.
+    amount_paid        DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    balance            DECIMAL(12,2) GENERATED ALWAYS AS (total_payable - amount_paid) STORED,
     due_date           DATE NULL,
     remarks            VARCHAR(255) NULL,
     created_by         INT UNSIGNED NULL,
@@ -277,6 +282,7 @@ CREATE TABLE IF NOT EXISTS student_fee_assignments (
     UNIQUE KEY uq_sfa_student_structure (student_id, fee_structure_id),
     KEY idx_sfa_ay_sem (academic_year_id, semester),
     KEY idx_sfa_due (due_date),
+    KEY idx_sfa_balance (balance),
     CONSTRAINT fk_sfa_student   FOREIGN KEY (student_id)       REFERENCES students (id)       ON DELETE RESTRICT,
     CONSTRAINT fk_sfa_structure FOREIGN KEY (fee_structure_id) REFERENCES fee_structures (id) ON DELETE SET NULL,
     CONSTRAINT fk_sfa_ay        FOREIGN KEY (academic_year_id) REFERENCES academic_years (id) ON DELETE RESTRICT,
@@ -284,6 +290,7 @@ CREATE TABLE IF NOT EXISTS student_fee_assignments (
     CONSTRAINT chk_sfa_non_negative CHECK (admission_fee >= 0 AND tuition_fee >= 0 AND examination_fee >= 0 AND library_fee >= 0
                                            AND laboratory_fee >= 0 AND transport_fee >= 0 AND hostel_fee >= 0 AND misc_fee >= 0
                                            AND scholarship_amount >= 0 AND discount_amount >= 0),
+    CONSTRAINT chk_sfa_paid CHECK (amount_paid >= 0 AND amount_paid <= total_payable),
     CONSTRAINT chk_sfa_concession CHECK (scholarship_amount + discount_amount <=
         admission_fee + tuition_fee + examination_fee + library_fee + laboratory_fee + transport_fee + hostel_fee + misc_fee)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -311,8 +318,9 @@ CREATE TABLE IF NOT EXISTS fee_payments (
     PRIMARY KEY (id),
     UNIQUE KEY uq_fee_payments_receipt (receipt_no),
     KEY idx_fp_student (student_id),
-    KEY idx_fp_assignment (assignment_id, status),
-    KEY idx_fp_status_date (status, payment_date),
+    KEY idx_fp_assignment (assignment_id, status, amount),
+    KEY idx_fp_status_date (status, payment_date, id, amount),
+    KEY idx_fp_date (payment_date, id),
     KEY idx_fp_txn_ref (transaction_ref_norm),
     CONSTRAINT fk_fp_student     FOREIGN KEY (student_id)    REFERENCES students (id)                ON DELETE RESTRICT,
     CONSTRAINT fk_fp_assignment  FOREIGN KEY (assignment_id) REFERENCES student_fee_assignments (id) ON DELETE RESTRICT,

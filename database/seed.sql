@@ -330,4 +330,7 @@ INSERT INTO salary_payments (slip_no, staff_id, salary_structure_id, pay_month, 
 INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_values) VALUES
   (1, 'system.seed', 'system', NULL, '{"note": "Sample data loaded"}');
 
+UPDATE student_fee_assignments a SET amount_paid = (SELECT COALESCE(SUM(p.amount), 0) FROM fee_payments p
+  WHERE p.assignment_id = a.id AND p.status = 'confirmed');
+
 SET FOREIGN_KEY_CHECKS = 1;

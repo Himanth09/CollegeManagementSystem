@@ -28,8 +28,13 @@ function make_assignment(array $over = []): int
     ]);
 }
 
+/** Inserts a payment the way the app does: a confirmed one also updates the running total. */
 function make_payment(int $assignmentId, string $amount, string $status = 'confirmed', ?string $ref = null): int
 {
+    if ($status === 'confirmed') {
+        FeeLedger::lockAssignment($assignmentId);
+        FeeLedger::addPaid($assignmentId, $amount);
+    }
     return Database::insert('fee_payments', [
         'student_id' => 1, 'assignment_id' => $assignmentId, 'payment_date' => date('Y-m-d'), 'amount' => $amount,
         'payment_mode' => $ref ? 'UPI' : 'Cash', 'transaction_ref' => $ref, 'transaction_ref_norm' => FeeLedger::normalizeRef($ref),
@@ -146,6 +151,48 @@ suite('FeeLedger (balances)', function () {
         eq(App\Core\Money::sub($after['total_payable'], $after['total_paid']), $after['outstanding']);
     });
 
+    it('running totals always match the payment history', function () {
+        $id = make_assignment();
+        make_payment($id, '1000.00');
+        make_payment($id, '500.00', 'pending_review', 'R1');
+        eq([], FeeLedger::reconcile());
+        // A payment changed without going through the ledger is detected.
+        Database::execute("UPDATE fee_payments SET status = 'cancelled' WHERE assignment_id = ? AND status = 'confirmed'", [$id]);
+        eq([$id], array_map(fn ($r) => (int) $r['id'], FeeLedger::reconcile()));
+    });
+
+    it('the database itself refuses an overpaid or negative running total', function () {
+        $id = make_assignment();
+        throws(PDOException::class, fn () => FeeLedger::addPaid($id, '54000.01'));
+        FeeLedger::addPaid($id, '54000.00');
+        eq('0.00', FeeLedger::lockAssignment($id)['balance']);
+        throws(PDOException::class, fn () => FeeLedger::addPaid($id, '-54000.01'));
+    });
+
+    it('a concession that would push payable below the amount paid is refused', function () {
+        $id = make_assignment();
+        make_payment($id, '50000.00');
+        throws(PDOException::class, fn () => Database::update('student_fee_assignments', $id, ['discount_amount' => '6000.00']));
+    });
+
+    it('balance is a stored column that follows payable and paid', function () {
+        $id = make_assignment();
+        make_payment($id, '4000.00');
+        eq('50000.00', (string) Database::value('SELECT balance FROM student_fee_assignments WHERE id = ?', [$id]));
+        Database::update('student_fee_assignments', $id, ['library_fee' => '0.00']);
+        eq('47000.50', (string) Database::value('SELECT balance FROM student_fee_assignments WHERE id = ?', [$id]));
+    });
+
+    it('addPaid refuses to run outside a transaction', function () {
+        $pdo = Database::pdo();
+        $pdo->rollBack();
+        try {
+            throws(LogicException::class, fn () => FeeLedger::addPaid(1, '1.00'));
+        } finally {
+            $pdo->beginTransaction();
+        }
+    });
+
     it('seed data totals match the documented figures', function () {
         $r = Database::one('SELECT SUM(total_payable) AS payable FROM student_fee_assignments');
         $paid = Database::value("SELECT SUM(amount) FROM fee_payments WHERE status = 'confirmed'");
@@ -153,12 +200,10 @@ suite('FeeLedger (balances)', function () {
         eq(0, Money_cmp($paid, '1431000'), 'total confirmed paid');
     });
 
-    it('no seeded assignment is overpaid', function () {
-        $over = Database::value(
-            'SELECT COUNT(*) FROM student_fee_assignments a JOIN ' . FeeLedger::PAID_SUBQUERY . ' p ON p.assignment_id = a.id
-              WHERE p.paid > a.total_payable'
-        );
-        eq(0, (int) $over);
+    it('seed running totals are consistent and no assignment is overpaid', function () {
+        eq([], FeeLedger::reconcile());
+        eq(0, (int) Database::value('SELECT COUNT(*) FROM student_fee_assignments WHERE balance < 0'));
+        eq(0, Money_cmp(Database::value('SELECT SUM(amount_paid) FROM student_fee_assignments'), '1431000'));
     });
 }, db: true);
 

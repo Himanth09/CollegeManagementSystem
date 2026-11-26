@@ -78,6 +78,25 @@ final class Database
         return $v === false ? null : $v;
     }
 
+    /**
+     * Yields rows one at a time using an unbuffered query, so very large exports
+     * use constant memory. Run no other query on this connection until it ends.
+     */
+    public static function cursor(string $sql, array $params = []): \Generator
+    {
+        $pdo = self::pdo();
+        $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+        try {
+            $stmt = self::query($sql, $params);
+            while (($row = $stmt->fetch()) !== false) {
+                yield $row;
+            }
+            $stmt->closeCursor();
+        } finally {
+            $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, true);
+        }
+    }
+
     public static function column(string $sql, array $params = []): array
     {
         return self::query($sql, $params)->fetchAll(PDO::FETCH_COLUMN);
@@ -125,16 +144,32 @@ final class Database
         if ($pdo->inTransaction()) {
             return $fn();
         }
-        $pdo->beginTransaction();
-        try {
-            $result = $fn();
-            $pdo->commit();
-            return $result;
-        } catch (Throwable $e) {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
+        // InnoDB may pick this transaction as a deadlock victim when two requests lock the
+        // same rows or index gaps at once (e.g. the same new payment reference). The whole
+        // transaction has been rolled back by then, so it is safe to run it again; the
+        // retry then sees the winner's committed row and answers normally.
+        for ($attempt = 1; ; $attempt++) {
+            $pdo->beginTransaction();
+            try {
+                $result = $fn();
+                $pdo->commit();
+                return $result;
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                if ($attempt < 4 && self::isDeadlock($e)) {
+                    usleep(random_int(5_000, 40_000) * $attempt);
+                    continue;
+                }
+                throw $e;
             }
-            throw $e;
         }
+    }
+
+    /** MySQL 1213 (deadlock) or 1205 (lock wait timeout). */
+    public static function isDeadlock(Throwable $e): bool
+    {
+        return $e instanceof \PDOException && in_array((int) ($e->errorInfo[1] ?? 0), [1213, 1205], true);
     }
 }

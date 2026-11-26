@@ -23,7 +23,7 @@ A complete college administration portal: students, fees (with receipts and dues
 | **Reports** | Admissions, fee collection, pending dues, overdue, course-wise financial, semester-wise collection, staff, salary expenditure and monthly financial summary. All can be viewed, printed or downloaded as CSV. |
 | **Security** | `password_hash`/`password_verify`, session ID regeneration on login, HttpOnly/SameSite cookies, idle timeout, CSRF tokens on every POST, login throttling, secure password reset (hashed single-use tokens, no user enumeration), content-sniffed photo uploads stored outside the web root, output escaping, CSV-injection protection, CSP headers, audit log of every financial change, and one-click SQL backups. |
 
-**Accuracy of money:** totals are `STORED GENERATED` columns in MySQL (`total_payable`, `gross_salary`, `net_salary`, …), so they always match their components. PHP arithmetic uses integer paise. Outstanding Balance = Total Payable − Total **confirmed** payments, calculated in one shared place (`app/Core/FeeLedger.php`). A payment can never exceed the outstanding balance: the fee row is locked during the check.
+**Accuracy of money:** totals are `STORED GENERATED` columns in MySQL (`total_payable`, `gross_salary`, `net_salary`, …), so they always match their components. PHP arithmetic uses integer paise. Outstanding Balance = Total Payable − Total **confirmed** payments. Each fee assignment keeps a running `amount_paid` and a stored `balance` column, which `app/Core/FeeLedger.php` updates in the same locked transaction as the payment. Because of this, dues, the dashboard and reports never need to add up the whole payments table. A payment can never exceed the outstanding balance, for three reasons: the fee row is locked during the check, a database CHECK constraint (`0 ≤ amount_paid ≤ total_payable`) rejects any overpayment, and `FeeLedger::reconcile()` verifies the running totals against the payment history. Transactions that MySQL picks as deadlock victims are retried automatically.
 
 ---
 
@@ -103,6 +103,13 @@ A complete college administration portal: students, fees (with receipts and dues
 - Open `https://yourdomain.com/config/config.php`. It must return **403 Forbidden**.
 - Do the same for `/database/schema.sql` and `/storage/`.
 
+### Local development (Docker)
+1. Start Docker Desktop, then run `docker compose up -d --build` in the project folder.
+2. Copy `config/config.sample.php` to `config/config.php` and set `app.url` to `http://localhost:8080` and the `db` section to host `db`, port `3306`, name `cms`, user `cms`, password `TestPass#2026`.
+3. Open **http://localhost:8080/install/**, tick *Load sample data* and create the admin account. After that the app is at **http://localhost:8080**.
+
+MySQL is also reachable from Windows at `127.0.0.1:3308` (a `cms_unittest` database is created there too). Stop with `docker compose down`; add `-v` to wipe the database.
+
 ---
 
 ## 4. Default accounts (sample data)
@@ -142,7 +149,18 @@ Password rule: at least 8 characters, with upper- and lower-case letters, a numb
 
 ---
 
-## 7. Running the tests
+## 7. Upgrading an existing installation
+
+**From v1.0.0 to v1.1.0:**
+1. Take a backup.
+2. Upload the new files, keeping your `config/config.php`.
+3. Import `database/migrations/001_fee_amount_paid.sql` once in phpMyAdmin. This adds the running paid totals and the new indexes. It took about 25 s on 300,000 payments in testing.
+
+New installations already include these changes.
+
+---
+
+## 8. Running the tests
 
 The `tests/` folder holds a dependency-free suite. It needs no Composer or PHPUnit, and it is blocked from the web.
 
@@ -160,6 +178,14 @@ Integration tests (Database, FeeLedger balances, Auth/RBAC) need a **dedicated**
 ```
 
 You can also set the `CMS_TEST_DB_HOST`, `_PORT`, `_NAME`, `_USER` and `_PASS` environment variables. If neither is configured, the integration tests are skipped. The runner exits with code 1 if any test fails, so it can be used in CI.
+
+**Concurrency tests** (`tests/Integration/ConcurrencyTest.php`) start several PHP processes that hit the test database at the same instant. They check that:
+- simultaneous payments never overpay,
+- a new transaction reference is accepted only once,
+- approving and cancelling payments works correctly under races,
+- payroll generation and salary revisions don't create duplicates.
+
+They need `proc_open` and the test database, and they remove the data they create.
 
 **End-to-end HTTP tests** (`tests/Http`, run with `php tests/run.php --http`) send real requests to a running copy of the app. They go through the router, sessions, CSRF, controllers and MySQL, just like the browser does. They cover:
 - login, logout and throttling
@@ -184,6 +210,6 @@ The test server must use the seed data (`seed.sql`) with those passwords set. Fo
 
 ---
 
-## 8. Regenerating the sample data
+## 9. Regenerating the sample data
 
 `database/tools/generate_seed.py` builds `seed.sql` and checks that every total adds up (no overpayment, correct payable and net amounts). Run `python database/tools/generate_seed.py` and re-import.

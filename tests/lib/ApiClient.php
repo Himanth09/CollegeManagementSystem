@@ -66,6 +66,20 @@ final class ApiClient
         return $this->raw;
     }
 
+    public function cookieHeader(): string
+    {
+        return implode('; ', array_map(fn ($k, $v) => "$k=$v", array_keys($this->cookies), $this->cookies));
+    }
+
+    public function setCookieHeader(string $header): void
+    {
+        $this->cookies = [];
+        foreach (array_filter(explode('; ', $header)) as $pair) {
+            [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
+            $this->cookies[$k] = $v;
+        }
+    }
+
     public function header(string $name): ?string
     {
         return $this->headers[strtolower($name)] ?? null;

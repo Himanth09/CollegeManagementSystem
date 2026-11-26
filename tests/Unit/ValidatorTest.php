@@ -38,10 +38,10 @@ suite('Validator', function () {
     });
 
     it('validates money format strictly', function () {
-        foreach (['100', '0.5', '9999999999.99'] as $v) {
+        foreach (['100', '0.5', '999999999.99'] as $v) {
             Validator::make(['a' => $v], ['a' => 'money']);
         }
-        foreach (['-5', '1.234', '1e3', '1,000', '12345678901'] as $v) {
+        foreach (['-5', '1.234', '1e3', '1,000', '1000000000', '12345678901'] as $v) {
             throwsHttp(422, fn () => Validator::make(['a' => $v], ['a' => 'money']), 'a');
         }
     });

@@ -48,8 +48,7 @@ final class DashboardController
         if (Auth::can('fees.view')) {
             $cards['total_fee_collection'] = (string) Database::value("SELECT COALESCE(SUM(amount), 0) FROM fee_payments WHERE status = 'confirmed'");
             $cards['total_outstanding'] = (string) Database::value(
-                'SELECT COALESCE(SUM(GREATEST(a.total_payable - COALESCE(p.paid, 0), 0)), 0)
-                   FROM student_fee_assignments a LEFT JOIN ' . FeeLedger::PAID_SUBQUERY . ' p ON p.assignment_id = a.id'
+                'SELECT COALESCE(SUM(balance), 0) FROM student_fee_assignments WHERE balance > 0'
             );
             $cards['monthly_fee_collection'] = (string) Database::value(
                 "SELECT COALESCE(SUM(amount), 0) FROM fee_payments WHERE status = 'confirmed' AND payment_date >= ?", [$monthStart]
@@ -67,11 +66,10 @@ final class DashboardController
             }
             $charts['fee_collection_by_month'] = self::series($series);
             $charts['outstanding_by_course'] = Database::all(
-                'SELECT c.code AS label, c.name, SUM(a.total_payable - COALESCE(p.paid, 0)) AS value
+                'SELECT c.code AS label, c.name, SUM(a.balance) AS value
                    FROM student_fee_assignments a
                    JOIN students s ON s.id = a.student_id JOIN courses c ON c.id = s.course_id
-              LEFT JOIN ' . FeeLedger::PAID_SUBQUERY . ' p ON p.assignment_id = a.id
-                  WHERE a.total_payable - COALESCE(p.paid, 0) > 0
+                  WHERE a.balance > 0
                GROUP BY c.id, c.code, c.name ORDER BY value DESC'
             );
             $lists['recent_payments'] = Database::all(
@@ -81,11 +79,10 @@ final class DashboardController
             );
             $lists['pending_dues'] = Database::all(
                 'SELECT s.id AS student_id, s.full_name AS student_name, s.admission_no, c.code AS course_code, a.title, a.due_date,
-                        a.total_payable - COALESCE(p.paid, 0) AS balance, (a.due_date < CURDATE()) AS is_overdue
+                        a.balance, (a.due_date < CURDATE()) AS is_overdue
                    FROM student_fee_assignments a
                    JOIN students s ON s.id = a.student_id JOIN courses c ON c.id = s.course_id
-              LEFT JOIN ' . FeeLedger::PAID_SUBQUERY . ' p ON p.assignment_id = a.id
-                  WHERE a.total_payable - COALESCE(p.paid, 0) > 0
+                  WHERE a.balance > 0
                ORDER BY a.due_date IS NULL, a.due_date, balance DESC LIMIT 8'
             );
         }

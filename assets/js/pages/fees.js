@@ -297,7 +297,7 @@ export function Payments({ query }) {
       ${f.status !== 'pending_review' && html` <button class="link" onClick=${() => list.setFilter('status', 'pending_review')}>Show them</button>`}<//>`}
     <${Card} pad=${false}>
       <${Toolbar}>
-        <${SearchBox} value=${list.search} onChange=${list.setSearch} placeholder="Student, receipt or reference…" />
+        <${SearchBox} value=${list.search} onChange=${list.setSearch} placeholder="Student name or ID, full receipt no. or reference…" />
         <label class="inline-field">From <input class="input input-sm" type="date" value=${f.from} onChange=${(e) => list.setFilter('from', e.target.value)} /></label>
         <label class="inline-field">To <input class="input input-sm" type="date" value=${f.to} onChange=${(e) => list.setFilter('to', e.target.value)} /></label>
         <${FilterSelect} placeholder="All modes" value=${f.mode} onChange=${(v) => list.setFilter('mode', v)} options=${MODES} />

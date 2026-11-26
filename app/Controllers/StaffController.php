@@ -63,8 +63,8 @@ final class StaffController
     public static function export(): never
     {
         Auth::requirePermission('staff.view');
-        $rows = self::filters()->all(self::SELECT, self::FROM, ListQuery::orderBy(self::SORT, 'employee_id'));
-        Audit::log('staff.export', 'staff', null, null, ['rows' => count($rows)]);
+        $rows = self::filters()->cursor(self::SELECT, self::FROM, ListQuery::orderBy(self::SORT, 'employee_id'));
+        Audit::log('staff.export', 'staff', null, null, ['filters' => Csv::filters()]);
         Csv::download('staff', [
             'employee_id' => 'Employee ID', 'full_name' => 'Full Name', 'designation' => 'Designation',
             'department_name' => 'Department', 'contact_number' => 'Contact', 'email' => 'Email', 'address' => 'Address',

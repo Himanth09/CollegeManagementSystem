@@ -77,7 +77,8 @@ final class Validator
             'month'     => !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $v) ? "$label must be a valid month (YYYY-MM)." : null,
             'before_today' => $v > date('Y-m-d') ? "$label cannot be in the future." : null,
             'int'       => !preg_match('/^\d+$/', $v) ? "$label must be a whole number." : null,
-            'money'     => !preg_match('/^\d{1,10}(\.\d{1,2})?$/', $v) ? "$label must be a valid amount with up to 2 decimals." : null,
+            // Up to 99,99,99,999.99: even 8 fee components added together stay inside DECIMAL(12,2).
+            'money'     => !preg_match('/^\d{1,9}(\.\d{1,2})?$/', $v) ? "$label must be a valid amount (up to 99,99,99,999.99, 2 decimals)." : null,
             'min_value' => (float) $v < (float) $arg ? "$label must be at least $arg." : null,
             'max_value' => (float) $v > (float) $arg ? "$label must not exceed $arg." : null,
             'in'        => !in_array($v, explode(',', (string) $arg), true) ? "$label has an invalid value." : null,

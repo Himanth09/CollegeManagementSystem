@@ -20,6 +20,8 @@ use App\Core\Response;
  */
 final class ReportController
 {
+    private const SCREEN_LIMIT = 2000;
+
     private static function output(string $slug, string $title, array $columns, array $rows, array $totals = []): never
     {
         if (Request::queryStr('format') === 'csv') {
@@ -33,7 +35,14 @@ final class ReportController
             }
             Csv::download($slug, $cols, $rows);
         }
-        Response::ok(['title' => $title, 'columns' => $columns, 'rows' => $rows, 'totals' => (object) $totals]);
+        // Totals always cover every row; the on-screen table is capped to keep the browser responsive.
+        $count = count($rows);
+        $data = ['title' => $title, 'columns' => $columns, 'rows' => array_slice($rows, 0, self::SCREEN_LIMIT), 'totals' => (object) $totals, 'row_count' => $count];
+        if ($count > self::SCREEN_LIMIT) {
+            $data['truncated'] = true;
+            $data['notice'] = 'Showing the first ' . number_format(self::SCREEN_LIMIT) . ' of ' . number_format($count) . ' rows. Totals include all rows; download the CSV for the full list.';
+        }
+        Response::ok($data);
     }
 
     private static function col(string $key, string $label, string $type = 'text'): array
@@ -122,9 +131,9 @@ final class ReportController
         $rows = FeeController::duesFilters()->all(
             's.admission_no, s.full_name AS student_name, c.code AS course_code, ay.name AS academic_year, a.semester, a.title,
              a.due_date, GREATEST(DATEDIFF(CURDATE(), a.due_date), 0) AS days_overdue, a.total_payable,
-             COALESCE(p.paid, 0) AS amount_paid, a.total_payable - COALESCE(p.paid, 0) AS balance, s.parent_contact_number',
+             a.amount_paid, a.balance, s.parent_contact_number',
             FeeController::duesFrom(),
-            $overdueOnly ? 'ORDER BY days_overdue DESC, balance DESC' : 'ORDER BY balance DESC'
+            $overdueOnly ? 'ORDER BY days_overdue DESC, a.balance DESC' : 'ORDER BY a.balance DESC'
         );
         self::output($overdueOnly ? 'overdue_fees' : 'pending_dues', $overdueOnly ? 'Overdue Fees' : 'Pending Dues', [
             self::col('admission_no', 'Adm No'), self::col('student_name', 'Student'), self::col('course_code', 'Course'),
@@ -145,7 +154,12 @@ final class ReportController
         self::dues(true);
     }
 
-    private static function financialRows(string $groupSelect, string $groupBy, string $order): array
+    /**
+     * Fee totals per course (optionally per semester). Aggregates on the indexed
+     * student course_id first and joins the small courses table afterwards,
+     * which keeps the GROUP BY sort small on large datasets.
+     */
+    private static function financialRows(bool $bySemester): array
     {
         $params = [];
         $where = '';
@@ -153,17 +167,20 @@ final class ReportController
             $where = 'WHERE a.academic_year_id = ?';
             $params[] = $ay;
         }
+        $sem = $bySemester ? ', a.semester' : '';
         $rows = Database::all(
-            "SELECT $groupSelect, COUNT(DISTINCT a.student_id) AS students,
-                    SUM(a.gross_amount) AS gross, SUM(a.scholarship_amount + a.discount_amount) AS concessions,
-                    SUM(a.total_payable) AS total_payable, SUM(COALESCE(p.paid, 0)) AS collected,
-                    SUM(a.total_payable - COALESCE(p.paid, 0)) AS outstanding
-               FROM student_fee_assignments a
-               JOIN students s ON s.id = a.student_id
-               JOIN courses c ON c.id = s.course_id
-          LEFT JOIN " . FeeLedger::PAID_SUBQUERY . " p ON p.assignment_id = a.id
-               $where
-           GROUP BY $groupBy ORDER BY $order",
+            "SELECT c.code AS course_code, c.name AS course_name" . ($bySemester ? ', g.semester' : '') . ",
+                    g.students, g.gross, g.concessions, g.total_payable, g.collected, g.outstanding
+               FROM (SELECT s.course_id$sem, COUNT(DISTINCT a.student_id) AS students,
+                            SUM(a.gross_amount) AS gross, SUM(a.scholarship_amount + a.discount_amount) AS concessions,
+                            SUM(a.total_payable) AS total_payable, SUM(a.amount_paid) AS collected,
+                            SUM(a.balance) AS outstanding
+                       FROM student_fee_assignments a
+                       JOIN students s ON s.id = a.student_id
+                       $where
+                   GROUP BY s.course_id$sem) g
+               JOIN courses c ON c.id = g.course_id
+           ORDER BY c.name" . ($bySemester ? ', g.semester' : ''),
             $params
         );
         foreach ($rows as &$r) {
@@ -183,7 +200,7 @@ final class ReportController
     public static function courseFinancial(): never
     {
         Auth::requirePermission('reports.fees');
-        $rows = self::financialRows('c.code AS course_code, c.name AS course_name', 'c.id, c.code, c.name', 'c.name');
+        $rows = self::financialRows(false);
         self::output('course_financial', 'Course-wise Financial Report', [
             self::col('course_code', 'Code'), self::col('course_name', 'Course'), self::col('students', 'Students', 'int'),
             self::col('gross', 'Gross Fee', 'money'), self::col('concessions', 'Scholarship/Discount', 'money'),
@@ -195,7 +212,7 @@ final class ReportController
     public static function semesterCollection(): never
     {
         Auth::requirePermission('reports.fees');
-        $rows = self::financialRows('c.code AS course_code, c.name AS course_name, a.semester', 'c.id, c.code, c.name, a.semester', 'c.name, a.semester');
+        $rows = self::financialRows(true);
         self::output('semester_collection', 'Course & Semester-wise Collection', [
             self::col('course_code', 'Code'), self::col('course_name', 'Course'), self::col('semester', 'Semester', 'int'),
             self::col('students', 'Students', 'int'), self::col('total_payable', 'Payable', 'money'),

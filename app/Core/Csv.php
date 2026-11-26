@@ -33,6 +33,12 @@ final class Csv
         exit;
     }
 
+    /** The query-string filters of an export, for the audit log. */
+    public static function filters(): array
+    {
+        return array_filter(array_diff_key($_GET, ['r' => 1]), 'is_scalar');
+    }
+
     private static function safe(mixed $v): string
     {
         $s = (string) $v;
